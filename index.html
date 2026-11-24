@@ -1,0 +1,2101 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Theo Dõi Tiến Độ Công Việc Hàng Ngày</title>
+    <!-- Tải Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tải Google Fonts: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Tải Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Tải Google Identity Services (OAuth2 cho Google Drive trực tuyến) -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+            color: #0f172a;
+        }
+
+        /* Hiệu ứng nhấp nháy nhẹ cho công việc quá hạn */
+        @keyframes pulse-border {
+            0%, 100% { border-color: rgba(239, 68, 68, 0.9); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.25); }
+            50% { border-color: rgba(239, 68, 68, 0.4); box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.08); }
+        }
+        .overdue-pulse {
+            animation: pulse-border 2.2s infinite;
+        }
+
+        /* Tùy chỉnh thanh trượt tiến độ */
+        input[type=range] {
+            -webkit-appearance: none;
+            appearance: none;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #2563eb;
+            border: 2px solid #ffffff;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+            transition: transform 0.15s ease;
+        }
+        input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 6px;
+            cursor: pointer;
+            border-radius: 999px;
+        }
+        input[type=range]:focus {
+            outline: none;
+        }
+
+        /* Thanh cuộn tinh gọn cho chế độ Widget ghim góc màn hình */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        /* Chế độ thu gọn Widget (Compact Mode) */
+        body.compact-mode .hide-in-compact {
+            display: none !important;
+        }
+        body.compact-mode .compact-container {
+            max-width: 440px;
+            margin: 0 auto;
+            padding: 0.75rem;
+        }
+        body.compact-mode .compact-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 0.5rem !important;
+        }
+    </style>
+</head>
+<body class="min-h-screen transition-all duration-200">
+
+    <!-- Container chính -->
+    <div id="app-container" class="compact-container max-w-[1440px] mx-auto px-3 sm:px-5 py-3">
+
+        <!-- Header & Thanh công cụ -->
+        <header class="bg-white rounded-xl shadow-xs border border-slate-200/80 px-3.5 py-2.5 mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                    <i data-lucide="clipboard-check" class="w-4 h-4"></i>
+                </div>
+                <div class="flex items-center gap-2">
+                    <h1 class="text-sm sm:text-base font-bold text-slate-900 tracking-tight">Theo Dõi Công Việc Hàng Ngày</h1>
+                    <span id="live-clock" class="hidden sm:inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 text-slate-600"></span>
+                </div>
+            </div>
+
+            <!-- Các nút hành động -->
+            <div class="flex flex-wrap items-center gap-1.5">
+                <!-- Nút Thêm / Tiếp nhận mới -->
+                <button onclick="openTaskModal()" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white text-xs font-semibold shadow-xs transition cursor-pointer">
+                    <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i>
+                    <span>Tiếp nhận mới</span>
+                </button>
+
+                <!-- Nút Chế độ Ghim góc màn hình -->
+                <button id="btn-toggle-compact" onclick="toggleCompactMode()" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium transition cursor-pointer" title="Thu gọn giao diện để ghim ở góc màn hình">
+                    <i data-lucide="minimize-2" id="icon-compact" class="w-3.5 h-3.5 text-indigo-600"></i>
+                    <span id="label-compact" class="hidden md:inline">Ghim góc màn hình</span>
+                </button>
+
+                <!-- Nút Google Drive: trạng thái đồng bộ -->
+                <button onclick="onDriveButtonClick()" id="btn-drive-status" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 text-xs font-semibold transition cursor-pointer" title="Đồng bộ dữ liệu với Google Drive (thien.tnmthd@gmail.com)">
+                    <span id="drive-dot" class="w-2 h-2 rounded-full bg-slate-400"></span>
+                    <span id="drive-btn-text">Drive: Chưa kết nối</span>
+                </button>
+
+                <!-- Menu Tùy chọn khác -->
+                <div class="relative">
+                    <button onclick="toggleDropdownMenu()" class="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer" title="Tùy chọn & Hướng dẫn ghim">
+                        <i data-lucide="more-vertical" class="w-4 h-4"></i>
+                    </button>
+                    <div id="dropdown-menu" class="hidden absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 py-1.5 z-50 text-sm">
+                        <button onclick="openStartupGuideModal(); toggleDropdownMenu();" class="w-full px-4 py-2.5 text-left hover:bg-slate-50 flex items-center gap-2.5 text-slate-700">
+                            <i data-lucide="pin" class="w-4 h-4 text-blue-600"></i>
+                            <span>Ghim Taskbar & Tự khởi động</span>
+                        </button>
+                        <button onclick="openDriveSyncModal(); toggleDropdownMenu();" class="w-full px-4 py-2.5 text-left hover:bg-slate-50 flex items-center gap-2.5 text-slate-700">
+                            <i data-lucide="cloud-upload" class="w-4 h-4 text-emerald-600"></i>
+                            <span>Lưu trữ Google Drive</span>
+                        </button>
+                        <button onclick="exportBackupJSON(); toggleDropdownMenu();" class="w-full px-4 py-2.5 text-left hover:bg-slate-50 flex items-center gap-2.5 text-slate-700">
+                            <i data-lucide="download" class="w-4 h-4 text-slate-500"></i>
+                            <span>Tải file sao lưu (.json)</span>
+                        </button>
+                        <label class="w-full px-4 py-2.5 text-left hover:bg-slate-50 flex items-center gap-2.5 text-slate-700 cursor-pointer">
+                            <i data-lucide="upload" class="w-4 h-4 text-slate-500"></i>
+                            <span>Khôi phục từ file (.json)</span>
+                            <input type="file" accept=".json" onchange="importBackupJSON(event); toggleDropdownMenu();" class="hidden">
+                        </label>
+                        <div class="border-t border-slate-100 my-1"></div>
+                        <button onclick="resetToSampleData(); toggleDropdownMenu();" class="w-full px-4 py-2.5 text-left hover:bg-red-50 flex items-center gap-2.5 text-red-600">
+                            <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+                            <span>Khôi phục dữ liệu mẫu</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Thẻ thống kê tổng quan tinh gọn 1 hàng -->
+        <section class="compact-grid grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-3">
+            <!-- Tổng số -->
+            <div onclick="setFilter('all')" class="bg-white rounded-xl px-3 py-2 border border-slate-200/80 shadow-2xs hover:border-blue-300 transition cursor-pointer flex items-center justify-between">
+                <div>
+                    <div class="text-[11px] font-medium text-slate-500">Tổng tiếp nhận</div>
+                    <div id="stat-total" class="text-lg font-extrabold text-slate-900 leading-tight">0</div>
+                </div>
+                <span class="w-7 h-7 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+                    <i data-lucide="layers" class="w-3.5 h-3.5"></i>
+                </span>
+            </div>
+
+            <!-- Quá hạn -->
+            <div onclick="setFilter('overdue')" class="bg-white rounded-xl px-3 py-2 border border-red-200 shadow-2xs hover:border-red-400 transition cursor-pointer flex items-center justify-between">
+                <div>
+                    <div class="text-[11px] font-semibold text-red-600">Quá hạn</div>
+                    <div id="stat-overdue" class="text-lg font-extrabold text-red-600 leading-tight">0</div>
+                </div>
+                <span class="w-7 h-7 rounded-lg bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+                    <i data-lucide="alert-octagon" class="w-3.5 h-3.5"></i>
+                </span>
+            </div>
+
+            <!-- Sắp đến hạn (<= 2 ngày) -->
+            <div onclick="setFilter('due-soon')" class="bg-white rounded-xl px-3 py-2 border border-amber-200 shadow-2xs hover:border-amber-400 transition cursor-pointer flex items-center justify-between">
+                <div>
+                    <div class="text-[11px] font-semibold text-amber-600">Sắp đến hạn</div>
+                    <div id="stat-duesoon" class="text-lg font-extrabold text-amber-600 leading-tight">0</div>
+                </div>
+                <span class="w-7 h-7 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                    <i data-lucide="clock" class="w-3.5 h-3.5"></i>
+                </span>
+            </div>
+
+            <!-- Đang thực hiện -->
+            <div onclick="setFilter('in-progress')" class="bg-white rounded-xl px-3 py-2 border border-blue-200 shadow-2xs hover:border-blue-400 transition cursor-pointer flex items-center justify-between">
+                <div>
+                    <div class="text-[11px] font-semibold text-blue-600">Trong hạn</div>
+                    <div id="stat-inprogress" class="text-lg font-extrabold text-blue-600 leading-tight">0</div>
+                </div>
+                <span class="w-7 h-7 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
+                    <i data-lucide="loader" class="w-3.5 h-3.5"></i>
+                </span>
+            </div>
+
+            <!-- Hoàn thành -->
+            <div onclick="setFilter('completed')" class="bg-white rounded-xl px-3 py-2 border border-emerald-200 shadow-2xs hover:border-emerald-400 transition cursor-pointer flex items-center justify-between">
+                <div>
+                    <div class="text-[11px] font-semibold text-emerald-600">Hoàn thành</div>
+                    <div id="stat-completed" class="text-lg font-extrabold text-emerald-600 leading-tight">0</div>
+                </div>
+                <span class="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                    <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>
+                </span>
+            </div>
+
+            <!-- Tiến độ đồng bộ SVN / VBDLis -->
+            <div onclick="setFilter('unsynced')" class="bg-white rounded-xl px-3 py-2 border border-indigo-200 shadow-2xs hover:border-indigo-400 transition cursor-pointer flex items-center justify-between">
+                <div>
+                    <div class="text-[11px] font-semibold text-indigo-600">SVN / VBDLis</div>
+                    <div id="stat-sync" class="text-base font-extrabold text-indigo-700 leading-tight">0/0</div>
+                </div>
+                <span class="w-7 h-7 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+                    <i data-lucide="database" class="w-3.5 h-3.5"></i>
+                </span>
+            </div>
+        </section>
+
+        <!-- Thanh tiến độ tổng hợp + Bộ lọc & Tìm kiếm gộp gọn -->
+        <section class="bg-white rounded-xl p-2.5 border border-slate-200/80 shadow-2xs mb-3 space-y-2">
+            <!-- Dải tiến độ chung siêu gọn -->
+            <div id="analytics-section" class="hide-in-compact flex items-center gap-3 pb-2 border-b border-slate-100">
+                <div class="flex items-center gap-1.5 shrink-0">
+                    <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Tiến độ chung:</span>
+                    <span id="overall-percent-badge" class="px-1.5 py-0.2 rounded-md text-[11px] font-bold bg-blue-100 text-blue-700">0%</span>
+                </div>
+                <div class="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden flex">
+                    <div id="bar-completed" class="bg-emerald-500 transition-all duration-500" style="width: 0%"></div>
+                    <div id="bar-inprogress" class="bg-blue-500 transition-all duration-500" style="width: 0%"></div>
+                    <div id="bar-duesoon" class="bg-amber-500 transition-all duration-500" style="width: 0%"></div>
+                    <div id="bar-overdue" class="bg-red-500 transition-all duration-500" style="width: 0%"></div>
+                </div>
+                <div class="hidden xl:flex items-center gap-3 text-[11px] text-slate-500 shrink-0">
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-red-500"></span> Quá hạn</span>
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-500"></span> Cận hạn</span>
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-500"></span> Trong hạn</span>
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Xong</span>
+                </div>
+            </div>
+
+            <!-- Bộ lọc & Tìm kiếm -->
+            <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-2">
+                <!-- Các nút lọc trạng thái -->
+                <div class="flex items-center gap-1 overflow-x-auto pb-0.5 lg:pb-0">
+                    <button data-filter="all" onclick="setFilter('all')" class="filter-btn px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-900 text-white whitespace-nowrap transition cursor-pointer">Tất cả</button>
+                    <button data-filter="urgent" onclick="setFilter('urgent')" class="filter-btn px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 whitespace-nowrap transition cursor-pointer">Cần xử lý gấp</button>
+                    <button data-filter="overdue" onclick="setFilter('overdue')" class="filter-btn px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 whitespace-nowrap transition cursor-pointer">Quá hạn</button>
+                    <button data-filter="due-soon" onclick="setFilter('due-soon')" class="filter-btn px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 whitespace-nowrap transition cursor-pointer">Sắp đến hạn</button>
+                    <button data-filter="no-svn" onclick="setFilter('no-svn')" class="filter-btn px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 whitespace-nowrap transition cursor-pointer">Chưa SVN</button>
+                    <button data-filter="no-vbdlis" onclick="setFilter('no-vbdlis')" class="filter-btn px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 whitespace-nowrap transition cursor-pointer">Chưa VBDLis</button>
+                    <button data-filter="completed" onclick="setFilter('completed')" class="filter-btn px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 whitespace-nowrap transition cursor-pointer">Đã xong</button>
+                </div>
+
+                <!-- Lọc theo người thực hiện & Ô tìm kiếm -->
+                <div class="flex flex-wrap sm:flex-nowrap items-center gap-1.5">
+                    <!-- Ô lọc xã/phường hỗ trợ gõ tìm kiếm -->
+                    <div class="relative">
+                        <input type="text" id="ward-filter" list="ward-filter-suggestions" oninput="onFilterChange()" onchange="onFilterChange()" placeholder="Tất cả xã/phường..." class="px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 w-[170px]" autocomplete="off">
+                        <datalist id="ward-filter-suggestions">
+                            <!-- Được điền tự động bằng populateWardSelectors -->
+                        </datalist>
+                    </div>
+
+                    <select id="year-filter" onchange="onFilterChange()" class="px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="all">Tất cả năm</option>
+                    </select>
+
+                    <select id="month-filter" onchange="onFilterChange()" class="px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="all">Tất cả tháng</option>
+                        <option value="1">Tháng 1</option>
+                        <option value="2">Tháng 2</option>
+                        <option value="3">Tháng 3</option>
+                        <option value="4">Tháng 4</option>
+                        <option value="5">Tháng 5</option>
+                        <option value="6">Tháng 6</option>
+                        <option value="7">Tháng 7</option>
+                        <option value="8">Tháng 8</option>
+                        <option value="9">Tháng 9</option>
+                        <option value="10">Tháng 10</option>
+                        <option value="11">Tháng 11</option>
+                        <option value="12">Tháng 12</option>
+                    </select>
+
+                    <select id="assignee-filter" onchange="onFilterChange()" class="px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="all">Tất cả người thực hiện</option>
+                        <option value="Nguyễn Xuân Quyền">Nguyễn Xuân Quyền</option>
+                        <option value="Phạm Văn Ngọc">Phạm Văn Ngọc</option>
+                        <option value="Nguyễn Ngọc Thiện">Nguyễn Ngọc Thiện</option>
+                        <option value="Nguyễn Hoàng Chính">Nguyễn Hoàng Chính</option>
+                    </select>
+
+                    <div class="relative flex-1 sm:w-44">
+                        <i data-lucide="search" class="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2"></i>
+                        <input type="text" id="search-input" oninput="onFilterChange()" placeholder="Tìm số hiệu, nội dung..." class="w-full pl-8 pr-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 text-[11px] focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Danh sách công việc dạng bảng dòng gọn (Compact List) -->
+        <main id="task-list" class="space-y-1.5">
+            <!-- Nội dung sẽ được render bằng JS -->
+        </main>
+
+        <!-- Thanh phân trang (Pagination) -->
+        <div id="pagination-container" class="flex items-center justify-between pt-3 mt-2 border-t border-slate-200/80 text-xs text-slate-600">
+        </div>
+
+    </div>
+
+    <!-- MODAL: THÊM / SỬA CÔNG VIỆC & QUÉT VĂN BẢN (OCR / PDF / CTRL+V) -->
+    <div id="task-modal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+        <div class="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-2xl overflow-hidden my-auto">
+            <!-- Header Modal -->
+            <div class="px-6 py-4 bg-slate-50 border-b border-slate-200/80 flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center">
+                        <i data-lucide="file-plus-2" class="w-4 h-4"></i>
+                    </div>
+                    <h2 id="modal-title" class="text-base font-bold text-slate-900">Tiếp nhận công việc mới</h2>
+                </div>
+                <button onclick="closeTaskModal()" class="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition cursor-pointer">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <!-- Form nội dung -->
+            <form id="task-form" onsubmit="saveTask(event)" class="p-5 sm:p-6 space-y-4 max-h-[82vh] overflow-y-auto">
+                <input type="hidden" id="task-id">
+
+                <!-- Khu vực Quét chụp màn hình / Import PDF / Dán Ctrl+V -->
+                <div id="ocr-drop-zone" tabindex="0" class="rounded-2xl border-2 border-dashed border-blue-300 bg-blue-50/40 hover:bg-blue-50/80 focus:outline-none focus:ring-2 focus:ring-blue-500 p-4 transition text-center">
+                    <div class="flex flex-col sm:flex-row items-center justify-center gap-3">
+                        <button type="button" onclick="captureScreenForOCR()" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition cursor-pointer">
+                            <i data-lucide="monitor-dot" class="w-4 h-4"></i>
+                            <span>Chụp màn hình máy tính</span>
+                        </button>
+                        <label class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-xs font-semibold shadow-xs transition cursor-pointer">
+                            <i data-lucide="file-up" class="w-4 h-4 text-blue-600"></i>
+                            <span>Import file PDF / Ảnh</span>
+                            <input type="file" id="ocr-file-input" accept="image/*,.pdf" onchange="handleFileSelect(this)" class="hidden">
+                        </label>
+                    </div>
+                    <p class="text-[11px] text-slate-500 mt-2">
+                        Hoặc nhấn <kbd class="px-1.5 py-0.5 bg-white border border-slate-300 rounded text-slate-700 font-semibold">Ctrl + V</kbd> để dán ảnh chụp văn bản, kéo thả tệp vào đây để tự động bóc tách thông tin.
+                    </p>
+                    <div id="ocr-preview-container" class="mt-2.5 text-left"></div>
+                </div>
+
+                <!-- Hàng 1: Số hiệu văn bản & Cơ quan ban hành -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Số hiệu / Ký hiệu văn bản</label>
+                        <input type="text" id="task-doc-code" placeholder="VD: 011/CV-NK" class="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Cơ quan ban hành văn bản</label>
+                        <input type="text" id="task-issuing-agency" placeholder="VD: Công ty TNHH Khảo sát và xây dựng Nam Khánh" class="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+
+                <!-- Hàng 2: Nội dung công việc / Trích yếu đề nghị -->
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Nội dung công việc / Trích yếu đề nghị <span class="text-red-500">*</span></label>
+                    <input type="text" id="task-title" required placeholder="VD: V/v đề nghị kiểm tra, xác nhận sản phẩm Sơ đồ tài sản gắn liền với đất" class="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <!-- Hàng 2.5: Địa chỉ Xã / Phường / Đặc khu (TP Hải Phòng - 2 cấp) có ô gõ tìm kiếm -->
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Địa chỉ Xã / Phường / Đặc khu (TP. Hải Phòng)</label>
+                    <input type="text" id="task-ward" list="ward-suggestions" placeholder="Gõ để tìm hoặc chọn xã/phường/đặc khu..." class="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <datalist id="ward-suggestions">
+                        <!-- Được sinh tự động bằng JS -->
+                    </datalist>
+                </div>
+
+                <!-- Hàng 3: Ngày tiếp nhận & Thời hạn hoàn thành (Bộ chọn lịch trực quan + hiển thị DD-MM-YYYY) -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    <div>
+                        <div class="flex items-center justify-between mb-1">
+                            <label for="task-start-date" class="text-xs font-semibold text-slate-700">Ngày đến / Tiếp nhận <span class="text-red-500">*</span></label>
+                            <span id="start-date-vn-badge" class="text-[11px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md"></span>
+                        </div>
+                        <input type="date" id="task-start-date" required onchange="syncDatePickerBadge('task-start-date', 'start-date-vn-badge')" onclick="this.showPicker && this.showPicker()" class="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <div class="flex items-center justify-between mb-1">
+                            <label for="task-due-date" class="text-xs font-semibold text-slate-700">Thời hạn hoàn thành <span class="text-red-500">*</span></label>
+                            <span id="due-date-vn-badge" class="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md"></span>
+                        </div>
+                        <input type="date" id="task-due-date" required onchange="syncDatePickerBadge('task-due-date', 'due-date-vn-badge')" onclick="this.showPicker && this.showPicker()" class="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+
+                <!-- Hàng 4: Người thực hiện & Mức độ ưu tiên -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Người thực hiện</label>
+                        <select id="task-assignee" class="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="Nguyễn Xuân Quyền">Nguyễn Xuân Quyền</option>
+                            <option value="Phạm Văn Ngọc">Phạm Văn Ngọc</option>
+                            <option value="Nguyễn Ngọc Thiện">Nguyễn Ngọc Thiện</option>
+                            <option value="Nguyễn Hoàng Chính">Nguyễn Hoàng Chính</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Mức độ ưu tiên</label>
+                        <select id="task-priority" class="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="normal">Bình thường</option>
+                            <option value="high">Khẩn / Ưu tiên cao</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Hàng 5: Tiến độ & Trạng thái cập nhật SVN / VBDLis -->
+                <div class="bg-slate-50 rounded-2xl p-3.5 border border-slate-200/80 space-y-3">
+                    <div>
+                        <div class="flex justify-between items-center mb-1">
+                            <label class="text-xs font-semibold text-slate-700">Tiến độ thực hiện</label>
+                            <span id="modal-progress-val" class="text-xs font-bold text-blue-600">0%</span>
+                        </div>
+                        <input type="range" id="task-progress" min="0" max="100" step="5" value="0" oninput="document.getElementById('modal-progress-val').textContent = this.value + '%'" class="w-full">
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-4 pt-1 border-t border-slate-200/70">
+                        <label class="inline-flex items-center gap-2 cursor-pointer select-none">
+                            <input type="checkbox" id="task-svn" class="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500">
+                            <span class="text-xs font-semibold text-slate-700">Đã cập nhật SVN</span>
+                        </label>
+                        <label class="inline-flex items-center gap-2 cursor-pointer select-none">
+                            <input type="checkbox" id="task-vbdlis" class="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500">
+                            <span class="text-xs font-semibold text-slate-700">Đã cập nhật VBDLis</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Hàng 6: Ghi chú -->
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Ghi chú quá trình thực hiện</label>
+                    <textarea id="task-notes" rows="2" placeholder="Nhập ghi chú vướng mắc, kết quả xử lý..." class="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                </div>
+
+                <!-- Nút lưu -->
+                <div class="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+                    <button type="button" onclick="closeTaskModal()" class="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs sm:text-sm font-semibold transition cursor-pointer">Hủy bỏ</button>
+                    <button type="submit" id="btn-save-task" class="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-semibold shadow-sm transition cursor-pointer">Lưu công việc</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: HƯỚNG DẪN GHIM TASKBAR & KHỞI ĐỘNG CÙNG WINDOWS -->
+    <div id="startup-modal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden">
+            <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <i data-lucide="pin" class="w-4 h-4 text-blue-600"></i>
+                    <span>Ghim Taskbar & Tự khởi động cùng Windows</span>
+                </h3>
+                <button onclick="closeStartupGuideModal()" class="p-1 rounded-lg text-slate-400 hover:text-slate-700">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-4 text-xs sm:text-sm text-slate-600 leading-relaxed">
+                <div class="p-3.5 rounded-2xl bg-blue-50 border border-blue-100 text-blue-900">
+                    <strong>Bước 1: Tạo ứng dụng độc lập & Ghim xuống thanh Taskbar</strong>
+                    <p class="mt-1 text-xs">Mở tệp này bằng <strong>Microsoft Edge</strong> hoặc <strong>Google Chrome</strong> $\rightarrow$ Nhấn biểu tượng menu <strong>⋮</strong> (góc trên bên phải trình duyệt) $\rightarrow$ Chọn <strong>Ứng dụng (Apps)</strong> $\rightarrow$ <strong>Cài đặt trang web này dưới dạng ứng dụng (Install this site as an app)</strong> $\rightarrow$ Tích chọn <strong>Ghim vào thanh tác vụ (Pin to taskbar)</strong>.</p>
+                </div>
+                <div class="p-3.5 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-900">
+                    <strong>Bước 2: Tự động mở mỗi khi bật máy tính</strong>
+                    <p class="mt-1 text-xs">Nhấn tổ hợp phím <kbd class="px-1.5 py-0.5 bg-white border border-indigo-200 rounded font-semibold">Win + R</kbd>, gõ <code class="px-1.5 py-0.5 bg-white rounded font-mono text-indigo-700">shell:startup</code> rồi nhấn <strong>Enter</strong>. Sau đó kéo thả biểu tượng ứng dụng vừa tạo ngoài màn hình Desktop vào thư mục Startup này.</p>
+                </div>
+                <div class="p-3.5 rounded-2xl bg-slate-100 text-slate-700">
+                    <strong>Bước 3: Ghim gọn ở 1 góc màn hình</strong>
+                    <p class="mt-1 text-xs">Nhấn nút <strong>"Ghim góc màn hình"</strong> trên thanh công cụ của Dashboard để thu gọn kích thước cửa sổ về dạng thẻ nhỏ gọn đặt bên cạnh màn hình làm việc.</p>
+                </div>
+                <div class="flex justify-end pt-2">
+                    <button onclick="closeStartupGuideModal()" class="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold cursor-pointer">Đã hiểu</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: ĐỒNG BỘ GOOGLE DRIVE -->
+    <div id="drive-modal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-xl overflow-hidden">
+            <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <i data-lucide="hard-drive" class="w-4 h-4 text-emerald-600"></i>
+                    <span>Đồng bộ Google Drive (thien.tnmthd@gmail.com)</span>
+                </h3>
+                <button onclick="closeDriveSyncModal()" class="p-1 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-4 text-xs sm:text-sm text-slate-600 max-h-[82vh] overflow-y-auto">
+                <div class="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 space-y-3">
+                    <p class="text-xs text-blue-800 leading-relaxed">
+                        Dữ liệu được lưu thành tệp <code class="bg-white px-1.5 py-0.5 rounded font-semibold">Dashboard_CongViec_Haiphong.json</code> trong Google Drive của bạn. Máy nào đăng nhập cùng tài khoản và dùng cùng Client ID đều thấy cùng danh sách. Thêm, sửa, xóa ở máy nào cũng tự đồng bộ (mỗi lần thay đổi, khi mở lại tab và mỗi 60 giây).
+                    </p>
+                    <div>
+                        <label class="block text-[11px] font-bold text-blue-900 mb-1">Google OAuth Client ID</label>
+                        <input type="text" id="google-client-id-input" placeholder="Dán mã dạng ...apps.googleusercontent.com" class="w-full px-3 py-2 rounded-xl border border-blue-200 bg-white text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div id="google-oauth-status" class="text-xs font-semibold text-slate-600">Trạng thái: Chưa đăng nhập Google</div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button type="button" onclick="connectGoogleDriveOAuth()" class="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs transition cursor-pointer flex items-center gap-1.5">
+                            <i data-lucide="log-in" class="w-3.5 h-3.5"></i>
+                            <span>Đăng nhập Google Drive</span>
+                        </button>
+                        <button type="button" id="btn-drive-sync" onclick="syncDriveNow()" class="hidden px-3 py-2 rounded-xl bg-white border border-blue-300 hover:bg-blue-50 text-blue-700 text-xs font-semibold transition cursor-pointer">Đồng bộ ngay</button>
+                        <button type="button" id="btn-drive-logout" onclick="disconnectGoogleDrive()" class="hidden px-3 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-600 text-xs font-semibold transition cursor-pointer">Ngắt kết nối</button>
+                    </div>
+                </div>
+
+                <details class="rounded-2xl bg-emerald-50/70 border border-emerald-200 p-4 text-xs text-emerald-900" open>
+                    <summary class="font-bold cursor-pointer">Cài đặt 1 lần duy nhất (để dùng ở mọi máy)</summary>
+                    <ol class="list-decimal list-inside mt-2 space-y-2 text-slate-700 leading-relaxed">
+                        <li><strong>Đặt tệp này lên một địa chỉ https://</strong> cố định (ví dụ GitHub Pages hoặc Netlify). Google không cho đăng nhập khi mở tệp trực tiếp từ ổ đĩa (file://). Địa chỉ trang hiện tại: <code id="current-origin" class="bg-white px-1.5 py-0.5 rounded font-mono text-emerald-800 break-all"></code></li>
+                        <li>Vào <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" class="text-blue-600 underline font-semibold">Google Cloud Console</a> bằng tài khoản thien.tnmthd@gmail.com, tạo dự án rồi bấm <strong>Enable</strong> cho <strong>Google Drive API</strong>.</li>
+                        <li>Vào <strong>Google Auth Platform</strong> (hoặc OAuth consent screen), chọn loại <em>External</em> và thêm <strong>thien.tnmthd@gmail.com</strong> vào danh sách <em>Test users</em>.</li>
+                        <li>Vào <strong>Credentials</strong>, chọn <strong>Create Credentials</strong>, <strong>OAuth client ID</strong>, loại <em>Web application</em>. Ở mục <em>Authorized JavaScript origins</em> dán địa chỉ ở bước 1 (chỉ gồm https://tên-miền, không có đường dẫn phía sau).</li>
+                        <li>Sao chép <strong>Client ID</strong> dán vào ô phía trên, bấm <strong>Đăng nhập Google Drive</strong>. Ở máy khác chỉ cần mở cùng link, dán cùng Client ID và đăng nhập.</li>
+                    </ol>
+                </details>
+
+                <div class="flex items-center justify-between pt-2 border-t border-slate-100">
+                    <button type="button" onclick="exportBackupJSON()" class="text-xs font-semibold text-slate-600 hover:underline cursor-pointer">Tải file sao lưu dữ liệu (.json)</button>
+                    <button type="button" onclick="closeDriveSyncModal()" class="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold cursor-pointer">Đóng</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hộp thông báo Toast -->
+    <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+<script type="module">
+        const STORAGE_KEY = 'daily_work_tracker_tasks_v3';
+        const DELETED_KEY = 'daily_work_tracker_deleted_v1';
+        const GDRIVE_CLIENT_ID_KEY = 'daily_work_tracker_gdrive_client_id';
+        const GDRIVE_FILE_ID_KEY = 'daily_work_tracker_gdrive_file_id';
+        const GDRIVE_LINKED_KEY = 'daily_work_tracker_gdrive_linked';
+        const GEMINI_KEY = 'daily_work_tracker_gemini_key';
+        const GDRIVE_FILENAME = 'Dashboard_CongViec_Haiphong.json';
+        const GDRIVE_EMAIL = 'thien.tnmthd@gmail.com';
+        const GDRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+
+        let currentFilter = 'all';
+        let currentPage = 1;
+        const pageSize = 8; // Số công việc tối đa trên mỗi trang
+
+        let gdriveAccessToken = null;
+        let gdriveTokenExpiry = 0;
+        let gdriveFileId = localStorage.getItem(GDRIVE_FILE_ID_KEY) || null;
+        let lastSyncAt = null;
+        let deletedMap = loadDeleted();
+
+        // Danh sách đầy đủ 114 đơn vị hành chính cấp xã/phường/đặc khu TP. Hải Phòng (mô hình 2 cấp)
+        const HAI_PHONG_WARDS = [
+            "Phường Đồ Sơn", "Phường Nam Đồ Sơn", "Phường Lê Chân", "Phường An Biên",
+            "Phường Ngô Quyền", "Phường Gia Viên", "Phường Hồng Bàng", "Phường Hồng An",
+            "Phường Dương Kinh", "Phường Hưng Đạo", "Phường Kiến An", "Phường Phù Liễn",
+            "Phường An Dương", "Phường An Hải", "Phường An Phong", "Phường Hải An",
+            "Phường Đông Hải", "Phường Thủy Nguyên", "Phường Thiên Hương", "Phường Hòa Bình",
+            "Phường Nam Triệu", "Phường Bạch Đằng", "Phường Lưu Kiếm", "Phường Lê Ích Mộc",
+            "Phường Hải Dương", "Phường Lê Thanh Nghị", "Phường Việt Hòa", "Phường Thành Đông",
+            "Phường Nam Đồng", "Phường Tân Hưng", "Phường Thạch Khôi", "Phường Tứ Minh",
+            "Phường Ái Quốc", "Phường Chí Linh", "Phường Chu Văn An", "Phường Trần Hưng Đạo",
+            "Phường Nguyễn Trãi", "Phường Trần Nhân Tông", "Phường Lê Đại Hành", "Phường Kinh Môn",
+            "Phường Nguyễn Đại Năng", "Phường Trần Liễn", "Phường Bắc An Phụ", "Phường Nam An Phụ",
+            "Phường Nhị Chiểu", "Phường Phạm Sư Mạnh",
+            "Xã An Lão", "Xã An Khánh", "Xã An Quang", "Xã An Trường", "Xã An Hưng",
+            "Xã Kiến Thụy", "Xã Kiến Minh", "Xã Kiến Hải", "Xã Kiến Hưng", "Xã Nghi Dương",
+            "Xã Quyết Thắng", "Xã Tiên Lãng", "Xã Tân Minh", "Xã Tiên Minh", "Xã Chấn Hưng",
+            "Xã Hùng Thắng", "Xã Nguyễn Bỉnh Khiêm", "Xã Vĩnh Am", "Xã Vĩnh Hải", "Xã Vĩnh Bảo",
+            "Xã Vĩnh Hòa", "Xã Vĩnh Thuận", "Xã Vĩnh Thịnh", "Xã Việt Khê", "Xã Thanh Hà",
+            "Xã Hà Tây", "Xã Hà Bắc", "Xã Hà Nam", "Xã Hà Đông", "Xã Thanh Miện",
+            "Xã Bắc Thanh Miện", "Xã Nam Thanh Miện", "Xã Hải Hưng", "Xã Nguyễn Lương Bằng",
+            "Xã Nam Sách", "Xã Thái Tân", "Xã Hợp Tiến", "Xã Trần Phú", "Xã An Phú",
+            "Xã Phú Thái", "Xã Lai Khê", "Xã An Thành", "Xã Kim Thành", "Xã Tứ Kỳ",
+            "Xã Tân Kỳ", "Xã Đại Sơn", "Xã Chí Minh", "Xã Lạc Phượng", "Xã Nguyên Giáp",
+            "Xã Gia Lộc", "Xã Yết Kiêu", "Xã Gia Phúc", "Xã Trường Tân", "Xã Mao Điền",
+            "Xã Cẩm Giàng", "Xã Cẩm Giang", "Xã Tuệ Tĩnh", "Xã Kẻ Sặt", "Xã Bình Giang",
+            "Xã Đường An", "Xã Thượng Hồng", "Xã Ninh Giang", "Xã Vĩnh Lại", "Xã Khúc Thừa Dụ",
+            "Xã Tân An", "Xã Hồng Châu",
+            "Đặc khu Cát Hải", "Đặc khu Bạch Long Vĩ"
+        ];
+
+        function populateWardSelectors() {
+            const formList = document.getElementById('ward-suggestions');
+            const filterList = document.getElementById('ward-filter-suggestions');
+            const yearSelect = document.getElementById('year-filter');
+
+            if (formList) {
+                formList.innerHTML = HAI_PHONG_WARDS.map(w => `<option value="${escapeHtml(w)}"></option>`).join('');
+            }
+
+            if (filterList) {
+                const activeWards = new Set(tasks.map(t => t.ward).filter(Boolean));
+                const sortedWards = [
+                    ...Array.from(activeWards),
+                    ...HAI_PHONG_WARDS.filter(w => !activeWards.has(w))
+                ];
+                filterList.innerHTML = sortedWards.map(w => `<option value="${escapeHtml(w)}"></option>`).join('');
+            }
+
+            if (yearSelect) {
+                const currentVal = yearSelect.value;
+                const years = new Set([new Date().getFullYear().toString(), '2025', '2026', '2027']);
+                tasks.forEach(t => {
+                    const sd = parseVNDate(t.startDate);
+                    const dd = parseVNDate(t.dueDate);
+                    if (sd) years.add(sd.getFullYear().toString());
+                    if (dd) years.add(dd.getFullYear().toString());
+                });
+                const sortedYears = Array.from(years).sort((a, b) => Number(b) - Number(a));
+                yearSelect.innerHTML = `<option value="all">Tất cả năm</option>` +
+                    sortedYears.map(y => `<option value="${y}">Năm ${y}</option>`).join('');
+                if (currentVal) yearSelect.value = currentVal;
+            }
+        }
+
+        function resetToSampleData() {
+            if (!confirm('Khôi phục dữ liệu mẫu sẽ thay toàn bộ danh sách hiện tại (trên tất cả các máy). Tiếp tục?')) return;
+            replaceAllTasks(getSampleTasks());
+            populateWardSelectors();
+            renderDashboard();
+            showToast('Đã khôi phục dữ liệu mẫu ban đầu!', 'info');
+        }
+
+        function ensureSequentialSTT(list) {
+            return list.map((t, idx) => ({
+                ...t,
+                stt: t.stt || (idx + 1)
+            }));
+        }
+
+        function getNextSTT() {
+            if (!tasks || tasks.length === 0) return 1;
+            const maxStt = tasks.reduce((max, t) => Math.max(max, Number(t.stt) || 0), 0);
+            return maxStt + 1;
+        }
+
+        // ==========================================
+        // 1. TIỆN ÍCH XỬ LÝ NGÀY THÁNG CHUẨN VIỆT NAM (DD-MM-YYYY)
+        // ==========================================
+        function formatDateVN(date) {
+            const d = String(date.getDate()).padStart(2, '0');
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const y = date.getFullYear();
+            return `${d}-${m}-${y}`;
+        }
+
+        function getOffsetVNDateString(offsetDays = 0) {
+            const d = new Date();
+            d.setDate(d.getDate() + offsetDays);
+            return formatDateVN(d);
+        }
+
+        function parseVNDate(str) {
+            if (!str) return null;
+            const clean = String(str).trim().replace(/\//g, '-');
+            const vnMatch = clean.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+            if (vnMatch) {
+                const day = Number(vnMatch[1]);
+                const month = Number(vnMatch[2]) - 1;
+                const year = Number(vnMatch[3]);
+                const d = new Date(year, month, day);
+                if (d.getFullYear() === year && d.getMonth() === month && d.getDate() === day) {
+                    d.setHours(0, 0, 0, 0);
+                    return d;
+                }
+            }
+            const isoMatch = clean.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+            if (isoMatch) {
+                const year = Number(isoMatch[1]);
+                const month = Number(isoMatch[2]) - 1;
+                const day = Number(isoMatch[3]);
+                const d = new Date(year, month, day);
+                if (d.getFullYear() === year && d.getMonth() === month && d.getDate() === day) {
+                    d.setHours(0, 0, 0, 0);
+                    return d;
+                }
+            }
+            return null;
+        }
+
+        function normalizeToVNDateString(str) {
+            const parsed = parseVNDate(str);
+            return parsed ? formatDateVN(parsed) : (str || '');
+        }
+
+        function vnToInputISO(vnStr) {
+            const d = parseVNDate(vnStr);
+            if (!d) return '';
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${day}`;
+        }
+
+        function inputISOToVN(isoStr) {
+            const d = parseVNDate(isoStr);
+            return d ? formatDateVN(d) : '';
+        }
+
+        function syncDatePickerBadge(inputId, badgeId) {
+            const inputEl = document.getElementById(inputId);
+            const badgeEl = document.getElementById(badgeId);
+            if (!inputEl || !badgeEl) return;
+            const vnVal = inputISOToVN(inputEl.value);
+            badgeEl.textContent = vnVal || 'Chưa chọn';
+        }
+
+        function matchHaiPhongWard(rawText) {
+            if (!rawText) return '';
+            const norm = String(rawText).toLowerCase().trim();
+            const exact = HAI_PHONG_WARDS.find(w => w.toLowerCase() === norm);
+            if (exact) return exact;
+            const partial = HAI_PHONG_WARDS.find(w => {
+                const shortName = w.replace(/^(phường|xã|đặc khu)\s+/i, '').toLowerCase();
+                return norm.includes(w.toLowerCase()) || (shortName.length >= 4 && norm.includes(shortName));
+            });
+            return partial || '';
+        }
+
+        // ==========================================
+        // 2. DỮ LIỆU MẪU & LƯU TRỮ LOCALSTORAGE / DRIVE
+        // ==========================================
+        function getSampleTasks() {
+            return [
+                {
+                    id: 'task-sample-1',
+                    stt: 1,
+                    docCode: '011/CV-NK',
+                    issuingAgency: 'Công ty TNHH Khảo sát và xây dựng Nam Khánh',
+                    title: 'V/v đề nghị kiểm tra, xác nhận sản phẩm Sơ đồ tài sản gắn liền với đất',
+                    ward: 'Phường Dương Kinh',
+                    startDate: '10-11-2026',
+                    dueDate: getOffsetVNDateString(2),
+                    assignee: 'Nguyễn Ngọc Thiện',
+                    priority: 'high',
+                    progress: 65,
+                    svnUpdated: true,
+                    vbdlisUpdated: false,
+                    notes: 'Đã tiếp nhận hồ sơ bản đồ, đang kiểm tra đối chiếu tọa độ trên VBDLis.'
+                },
+                {
+                    id: 'task-sample-2',
+                    stt: 2,
+                    docCode: '142/TTr-ĐĐ',
+                    issuingAgency: 'UBND Phường Thủy Nguyên',
+                    title: 'Trích lục KDC Văn Thọ phục vụ công tác cấp giấy chứng nhận',
+                    ward: 'Phường Thủy Nguyên',
+                    startDate: '18-11-2026',
+                    dueDate: '21-11-2026',
+                    assignee: 'Nguyễn Ngọc Thiện',
+                    priority: 'normal',
+                    progress: 100,
+                    svnUpdated: true,
+                    vbdlisUpdated: true,
+                    notes: 'Đã hoàn thành xuất file và đồng bộ đầy đủ lên SVN và VBDLis.'
+                },
+                {
+                    id: 'task-sample-3',
+                    stt: 3,
+                    docCode: '89/CV-KT',
+                    issuingAgency: 'Chi nhánh Văn phòng ĐKĐĐ Kiến Thụy',
+                    title: 'Rà soát biến động thửa đất nông nghiệp sau dồn điền đổi thửa',
+                    ward: 'Xã Kiến Thụy',
+                    startDate: getOffsetVNDateString(-6),
+                    dueDate: getOffsetVNDateString(-1),
+                    assignee: 'Nguyễn Xuân Quyền',
+                    priority: 'high',
+                    progress: 40,
+                    svnUpdated: false,
+                    vbdlisUpdated: false,
+                    notes: 'Cần bổ sung trích đo địa chính khu vực giáp ranh.'
+                }
+            ];
+        }
+
+        function loadTasks() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (Array.isArray(parsed) && parsed.length > 0) {
+                        return ensureSequentialSTT(parsed);
+                    }
+                }
+            } catch (e) {
+                console.error('Lỗi đọc dữ liệu:', e);
+            }
+            const defaults = getSampleTasks();
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(defaults));
+            return defaults;
+        }
+
+        let tasks = loadTasks();
+
+        // ==========================================
+        // 2.5. ĐỒNG BỘ GOOGLE DRIVE (OAuth 2.0, gộp dữ liệu theo từng công việc)
+        // ==========================================
+        function loadDeleted() {
+            try {
+                const o = JSON.parse(localStorage.getItem(DELETED_KEY) || '{}');
+                return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
+            } catch (e) { return {}; }
+        }
+
+        function saveLocal() {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+            localStorage.setItem(DELETED_KEY, JSON.stringify(deletedMap));
+        }
+
+        // Lưu cục bộ + đóng dấu thời gian sửa + hẹn đồng bộ lên Drive
+        function persistTasks(changedTask = null, deletedTaskId = null) {
+            const now = Date.now();
+            if (deletedTaskId) {
+                deletedMap[deletedTaskId] = now;
+            } else if (changedTask) {
+                changedTask.updatedAt = now;
+                delete deletedMap[changedTask.id];
+            } else {
+                tasks.forEach(t => { t.updatedAt = now; delete deletedMap[t.id]; });
+            }
+            saveLocal();
+            scheduleDriveSync();
+        }
+
+        // Thay toàn bộ danh sách (khôi phục từ file / dữ liệu mẫu), các việc bị loại sẽ được đánh dấu đã xóa
+        function replaceAllTasks(newList) {
+            const now = Date.now();
+            const keep = new Set(newList.map(t => t.id));
+            tasks.forEach(t => { if (!keep.has(t.id)) deletedMap[t.id] = now; });
+            tasks = ensureSequentialSTT(newList);
+            persistTasks();
+        }
+
+        function normalizeRemote(raw) {
+            if (!raw) return null;
+            if (Array.isArray(raw)) return { tasks: raw, deleted: {} };
+            if (Array.isArray(raw.tasks)) return { tasks: raw.tasks, deleted: raw.deleted || {} };
+            return null;
+        }
+
+        function mergeData(local, remote) {
+            const deleted = { ...((remote && remote.deleted) || {}) };
+            for (const [id, ts] of Object.entries(local.deleted || {})) {
+                deleted[id] = Math.max(deleted[id] || 0, ts);
+            }
+            const limit = Date.now() - 180 * 24 * 3600 * 1000;
+            for (const id of Object.keys(deleted)) { if (deleted[id] < limit) delete deleted[id]; }
+
+            const map = new Map();
+            [...((remote && remote.tasks) || []), ...local.tasks].forEach(t => {
+                if (!t || !t.id) return;
+                const cur = map.get(t.id);
+                if (!cur || (t.updatedAt || 0) >= (cur.updatedAt || 0)) map.set(t.id, t);
+            });
+            const out = [];
+            for (const [id, t] of map) {
+                if (deleted[id] && deleted[id] >= (t.updatedAt || 0)) continue;
+                out.push({
+                    ...t,
+                    startDate: normalizeToVNDateString(t.startDate),
+                    dueDate: normalizeToVNDateString(t.dueDate)
+                });
+            }
+            out.sort((a, b) => (Number(b.stt) || 0) - (Number(a.stt) || 0));
+            return { tasks: out, deleted };
+        }
+
+        function serializeData(d) {
+            const ts = [...d.tasks].sort((a, b) => (a.id < b.id ? -1 : 1));
+            const del = Object.entries(d.deleted || {}).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+            return JSON.stringify({ t: ts, d: del });
+        }
+
+        function waitForGIS(ms = 10000) {
+            return new Promise((resolve, reject) => {
+                const t0 = Date.now();
+                (function check() {
+                    if (window.google && google.accounts && google.accounts.oauth2) return resolve();
+                    if (Date.now() - t0 > ms) return reject(new Error('gis-not-loaded'));
+                    setTimeout(check, 200);
+                })();
+            });
+        }
+
+        let tokenPromise = null;
+        function requestToken(prompt) {
+            if (tokenPromise) return tokenPromise;
+            tokenPromise = (async () => {
+                const clientId = (localStorage.getItem(GDRIVE_CLIENT_ID_KEY) || '').trim();
+                if (!clientId) throw new Error('no-client-id');
+                await waitForGIS();
+                return await new Promise((resolve, reject) => {
+                    const client = google.accounts.oauth2.initTokenClient({
+                        client_id: clientId,
+                        scope: GDRIVE_SCOPE,
+                        hint: GDRIVE_EMAIL,
+                        callback: (r) => {
+                            if (r && r.access_token) {
+                                gdriveAccessToken = r.access_token;
+                                gdriveTokenExpiry = Date.now() + ((Number(r.expires_in) || 3600) - 120) * 1000;
+                                localStorage.setItem(GDRIVE_LINKED_KEY, '1');
+                                resolve(r.access_token);
+                            } else {
+                                reject(new Error((r && r.error) || 'no-token'));
+                            }
+                        },
+                        error_callback: (e) => reject(new Error((e && e.type) || 'popup-error'))
+                    });
+                    client.requestAccessToken({ prompt });
+                });
+            })();
+            tokenPromise.then(() => { tokenPromise = null; }, () => { tokenPromise = null; });
+            return tokenPromise;
+        }
+
+        async function refreshTokenSilently() {
+            try {
+                await requestToken('');
+            } catch (e) {
+                gdriveAccessToken = null;
+                throw new Error('relogin');
+            }
+        }
+
+        async function driveFetch(url, options = {}, retry = true) {
+            if (!gdriveAccessToken || Date.now() > gdriveTokenExpiry) await refreshTokenSilently();
+            const res = await fetch(url, {
+                ...options,
+                headers: { ...(options.headers || {}), Authorization: `Bearer ${gdriveAccessToken}` }
+            });
+            if (res.status === 401 && retry) {
+                gdriveAccessToken = null;
+                await refreshTokenSilently();
+                return driveFetch(url, options, false);
+            }
+            return res;
+        }
+
+        async function ensureDriveFileId() {
+            if (gdriveFileId) return gdriveFileId;
+            const q = encodeURIComponent(`name='${GDRIVE_FILENAME}' and trashed=false`);
+            const searchRes = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=createdTime&fields=files(id,name,createdTime)`);
+            if (!searchRes.ok) throw new Error('drive-search-' + searchRes.status);
+            const found = await searchRes.json();
+            if (found.files && found.files.length > 0) {
+                gdriveFileId = found.files[0].id; // luôn chọn tệp tạo sớm nhất để các máy dùng chung 1 tệp
+            } else {
+                const form = new FormData();
+                form.append('metadata', new Blob([JSON.stringify({ name: GDRIVE_FILENAME, mimeType: 'application/json' })], { type: 'application/json' }));
+                form.append('file', new Blob([JSON.stringify({ version: 2, tasks: [], deleted: {} })], { type: 'application/json' }));
+                const createRes = await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', { method: 'POST', body: form });
+                if (!createRes.ok) throw new Error('drive-create-' + createRes.status);
+                gdriveFileId = (await createRes.json()).id;
+            }
+            localStorage.setItem(GDRIVE_FILE_ID_KEY, gdriveFileId);
+            return gdriveFileId;
+        }
+
+        async function getRemote() {
+            let fileId = await ensureDriveFileId();
+            let res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+            if (res.status === 404) {
+                gdriveFileId = null;
+                localStorage.removeItem(GDRIVE_FILE_ID_KEY);
+                fileId = await ensureDriveFileId();
+                res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+            }
+            if (!res.ok) throw new Error('drive-download-' + res.status);
+            const text = await res.text();
+            let raw = null;
+            if (text.trim()) {
+                try { raw = JSON.parse(text); } catch (e) { throw new Error('drive-corrupt'); }
+            }
+            return { fileId, remote: normalizeRemote(raw) };
+        }
+
+        async function uploadRemote(fileId, data) {
+            const body = JSON.stringify({ version: 2, savedAt: new Date().toISOString(), tasks: data.tasks, deleted: data.deleted }, null, 2);
+            const res = await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body
+            });
+            if (!res.ok) throw new Error('drive-upload-' + res.status);
+        }
+
+        let syncing = false;
+        let syncQueued = false;
+        let syncTimer = null;
+
+        function scheduleDriveSync() {
+            if (!localStorage.getItem(GDRIVE_LINKED_KEY)) return;
+            clearTimeout(syncTimer);
+            setDriveStatus('pending');
+            syncTimer = setTimeout(syncWithDrive, 1200);
+        }
+
+        async function syncWithDrive() {
+            if (!localStorage.getItem(GDRIVE_LINKED_KEY)) return false;
+            if (syncing) { syncQueued = true; return false; }
+            syncing = true;
+            setDriveStatus('syncing');
+            let ok = false;
+            try {
+                const { fileId, remote } = await getRemote();
+                const local = { tasks, deleted: deletedMap };
+                const merged = mergeData(local, remote);
+                const before = serializeData(local);
+                const after = serializeData(merged);
+                if (after !== before) {
+                    tasks = merged.tasks;
+                    deletedMap = merged.deleted;
+                    saveLocal();
+                    populateWardSelectors();
+                    renderDashboard();
+                }
+                const remoteSer = remote ? serializeData(remote) : '';
+                if (after !== remoteSer) await uploadRemote(fileId, merged);
+                lastSyncAt = new Date();
+                setDriveStatus('ok');
+                ok = true;
+            } catch (err) {
+                console.error('Lỗi đồng bộ Google Drive:', err);
+                setDriveStatus(err.message === 'relogin' ? 'relogin' : 'error');
+            } finally {
+                syncing = false;
+                if (syncQueued) { syncQueued = false; scheduleDriveSync(); }
+            }
+            return ok;
+        }
+
+        function setDriveStatus(state) {
+            const dot = document.getElementById('drive-dot');
+            const txt = document.getElementById('drive-btn-text');
+            const st = document.getElementById('google-oauth-status');
+            const linked = Boolean(localStorage.getItem(GDRIVE_LINKED_KEY));
+            const time = lastSyncAt ? lastSyncAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+            const map = {
+                off:     ['bg-slate-400', 'Drive: Chưa kết nối', 'Trạng thái: Chưa đăng nhập Google Drive'],
+                pending: ['bg-amber-500 animate-pulse', 'Drive: Chờ lưu...', 'Trạng thái: Có thay đổi, đang chuẩn bị lưu lên Drive...'],
+                syncing: ['bg-blue-500 animate-pulse', 'Drive: Đang đồng bộ...', 'Trạng thái: Đang đồng bộ với Google Drive...'],
+                ok:      ['bg-emerald-500', 'Drive: Đã đồng bộ', `Trạng thái: Đã đồng bộ với Google Drive lúc ${time}`],
+                error:   ['bg-red-500', 'Drive: Lỗi, bấm để thử lại', 'Trạng thái: Lỗi đồng bộ (dữ liệu vẫn được giữ trên máy này), sẽ tự thử lại sau 60 giây.'],
+                relogin: ['bg-amber-500', 'Drive: Bấm để đăng nhập lại', 'Trạng thái: Phiên đăng nhập đã hết, hãy bấm "Đăng nhập Google Drive".']
+            };
+            const [dotCls, label, longLabel] = map[state] || map.off;
+            if (dot) dot.className = `w-2 h-2 rounded-full ${dotCls}`;
+            if (txt) txt.textContent = label;
+            if (st) st.textContent = longLabel;
+            document.getElementById('btn-drive-sync')?.classList.toggle('hidden', !linked);
+            document.getElementById('btn-drive-logout')?.classList.toggle('hidden', !linked);
+            window.__driveState = state;
+        }
+
+        async function connectGoogleDriveOAuth() {
+            const input = document.getElementById('google-client-id-input');
+            const clientId = (input?.value || '').trim();
+            if (!clientId) {
+                showToast('Vui lòng dán mã Google OAuth Client ID vào ô phía trên trước khi đăng nhập!', 'error');
+                input?.focus();
+                return;
+            }
+            localStorage.setItem(GDRIVE_CLIENT_ID_KEY, clientId);
+            try {
+                setDriveStatus('syncing');
+                await requestToken('');
+                showToast('Đăng nhập Google Drive thành công! Đang đồng bộ dữ liệu...', 'success');
+                const ok = await syncWithDrive();
+                if (ok) showToast('Đã đồng bộ xong với Google Drive.', 'success');
+            } catch (err) {
+                console.error(err);
+                setDriveStatus(localStorage.getItem(GDRIVE_LINKED_KEY) ? 'relogin' : 'off');
+                showToast('Không đăng nhập được. Kiểm tra Client ID và địa chỉ trang đã khai báo trong Authorized JavaScript origins, và tài khoản đã được thêm vào Test users.', 'error');
+            }
+        }
+
+        async function syncDriveNow() {
+            if (!gdriveAccessToken || Date.now() > gdriveTokenExpiry) {
+                try { await requestToken(''); } catch (e) { setDriveStatus('relogin'); showToast('Cần đăng nhập lại Google Drive.', 'error'); return; }
+            }
+            const ok = await syncWithDrive();
+            showToast(ok ? 'Đã đồng bộ với Google Drive.' : 'Đồng bộ chưa thành công.', ok ? 'success' : 'error');
+        }
+
+        function disconnectGoogleDrive() {
+            try {
+                if (gdriveAccessToken && window.google && google.accounts && google.accounts.oauth2) {
+                    google.accounts.oauth2.revoke(gdriveAccessToken, () => {});
+                }
+            } catch (e) {}
+            gdriveAccessToken = null;
+            gdriveTokenExpiry = 0;
+            gdriveFileId = null;
+            localStorage.removeItem(GDRIVE_LINKED_KEY);
+            localStorage.removeItem(GDRIVE_FILE_ID_KEY);
+            setDriveStatus('off');
+            showToast('Đã ngắt kết nối Google Drive. Dữ liệu vẫn còn trên máy này.', 'info');
+        }
+
+        function onDriveButtonClick() {
+            const hasId = Boolean(localStorage.getItem(GDRIVE_CLIENT_ID_KEY));
+            if (window.__driveState === 'relogin' && hasId) {
+                const input = document.getElementById('google-client-id-input');
+                if (input && !input.value) input.value = localStorage.getItem(GDRIVE_CLIENT_ID_KEY);
+                connectGoogleDriveOAuth();
+            } else if (window.__driveState === 'error') {
+                syncDriveNow();
+            } else {
+                openDriveSyncModal();
+            }
+        }
+
+        async function initDriveSync() {
+            const originEl = document.getElementById('current-origin');
+            if (originEl) {
+                originEl.textContent = location.protocol === 'file:'
+                    ? '(đang mở trực tiếp từ ổ đĩa, cần đặt tệp lên địa chỉ https:// trước)'
+                    : location.origin;
+            }
+            const cid = localStorage.getItem(GDRIVE_CLIENT_ID_KEY) || '';
+            const input = document.getElementById('google-client-id-input');
+            if (input && cid) input.value = cid;
+
+            setInterval(() => { if (!document.hidden) syncWithDrive(); }, 60000);
+            document.addEventListener('visibilitychange', () => { if (!document.hidden) syncWithDrive(); });
+
+            if (!localStorage.getItem(GDRIVE_LINKED_KEY) || !cid) {
+                setDriveStatus('off');
+                return;
+            }
+            setDriveStatus('syncing');
+            try {
+                await refreshTokenSilently();
+                await syncWithDrive();
+            } catch (e) {
+                setDriveStatus('relogin');
+            }
+        }
+
+        function onFilterChange() {
+            currentPage = 1;
+            renderDashboard();
+        }
+
+        // ==========================================
+        // 3. TÍNH TOÁN TRẠNG THÁI & RENDER DASHBOARD
+        // ==========================================
+        function getTaskStatusInfo(task) {
+            if (Number(task.progress) >= 100) {
+                return {
+                    type: 'completed',
+                    badgeText: 'Đã hoàn thành',
+                    badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+                    cardClass: 'bg-emerald-50/30 border-emerald-200'
+                };
+            }
+
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const due = parseVNDate(task.dueDate);
+
+            if (!due) {
+                return {
+                    type: 'in-progress',
+                    badgeText: 'Đang thực hiện',
+                    badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
+                    cardClass: 'bg-white border-slate-200/90'
+                };
+            }
+
+            const diffDays = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
+
+            if (diffDays < 0) {
+                return {
+                    type: 'overdue',
+                    badgeText: `Quá hạn ${Math.abs(diffDays)} ngày`,
+                    badgeClass: 'bg-red-100 text-red-700 border-red-200',
+                    cardClass: 'bg-red-50/40 border-red-300 overdue-pulse'
+                };
+            }
+            if (diffDays <= 2) {
+                const label = diffDays === 0 ? 'Hết hạn hôm nay' : `Còn ${diffDays} ngày`;
+                return {
+                    type: 'due-soon',
+                    badgeText: label,
+                    badgeClass: 'bg-amber-100 text-amber-800 border-amber-200',
+                    cardClass: 'bg-amber-50/40 border-amber-300'
+                };
+            }
+            return {
+                type: 'in-progress',
+                badgeText: `Còn ${diffDays} ngày`,
+                badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
+                cardClass: 'bg-white border-slate-200/90'
+            };
+        }
+
+        function renderDashboard() {
+            const total = tasks.length;
+            let overdueCount = 0;
+            let dueSoonCount = 0;
+            let inProgressCount = 0;
+            let completedCount = 0;
+            let syncedBothCount = 0;
+            let totalProgressSum = 0;
+
+            tasks.forEach(t => {
+                const st = getTaskStatusInfo(t);
+                if (st.type === 'completed') completedCount++;
+                else if (st.type === 'overdue') overdueCount++;
+                else if (st.type === 'due-soon') dueSoonCount++;
+                else inProgressCount++;
+
+                if (t.svnUpdated && t.vbdlisUpdated) syncedBothCount++;
+                totalProgressSum += Number(t.progress) || 0;
+            });
+
+            document.getElementById('stat-total').textContent = total;
+            document.getElementById('stat-overdue').textContent = overdueCount;
+            document.getElementById('stat-duesoon').textContent = dueSoonCount;
+            document.getElementById('stat-inprogress').textContent = inProgressCount;
+            document.getElementById('stat-completed').textContent = completedCount;
+            document.getElementById('stat-sync').textContent = `${syncedBothCount}/${total}`;
+
+            const avgProgress = total > 0 ? Math.round(totalProgressSum / total) : 0;
+            document.getElementById('overall-percent-badge').textContent = `${avgProgress}%`;
+
+            if (total > 0) {
+                document.getElementById('bar-completed').style.width = `${(completedCount / total) * 100}%`;
+                document.getElementById('bar-inprogress').style.width = `${(inProgressCount / total) * 100}%`;
+                document.getElementById('bar-duesoon').style.width = `${(dueSoonCount / total) * 100}%`;
+                document.getElementById('bar-overdue').style.width = `${(overdueCount / total) * 100}%`;
+            } else {
+                ['bar-completed', 'bar-inprogress', 'bar-duesoon', 'bar-overdue'].forEach(id => {
+                    document.getElementById(id).style.width = '0%';
+                });
+            }
+
+            // Đọc giá trị các bộ lọc
+            const wardQuery = (document.getElementById('ward-filter')?.value || '').trim().toLowerCase();
+            const yearFilter = document.getElementById('year-filter')?.value || 'all';
+            const monthFilter = document.getElementById('month-filter')?.value || 'all';
+            const assigneeFilter = document.getElementById('assignee-filter')?.value || 'all';
+            const searchQuery = (document.getElementById('search-input')?.value || '').trim().toLowerCase();
+
+            const filtered = tasks.filter(t => {
+                const st = getTaskStatusInfo(t);
+
+                if (currentFilter === 'overdue' && st.type !== 'overdue') return false;
+                if (currentFilter === 'due-soon' && st.type !== 'due-soon') return false;
+                if (currentFilter === 'in-progress' && st.type !== 'in-progress') return false;
+                if (currentFilter === 'completed' && st.type !== 'completed') return false;
+                if (currentFilter === 'urgent' && st.type !== 'overdue' && st.type !== 'due-soon' && t.priority !== 'high') return false;
+                if (currentFilter === 'no-svn' && t.svnUpdated) return false;
+                if (currentFilter === 'no-vbdlis' && t.vbdlisUpdated) return false;
+                if (currentFilter === 'unsynced' && t.svnUpdated && t.vbdlisUpdated) return false;
+
+                // Lọc theo tên xã/phường (hỗ trợ gõ tìm kiếm không phân biệt hoa thường)
+                if (wardQuery && wardQuery !== 'tất cả xã/phường') {
+                    const taskWard = (t.ward || '').toLowerCase();
+                    if (!taskWard.includes(wardQuery)) return false;
+                }
+
+                // Lọc theo người thực hiện
+                if (assigneeFilter !== 'all' && t.assignee !== assigneeFilter) return false;
+
+                // Lọc theo Năm & Tháng (kiểu Excel)
+                if (yearFilter !== 'all' || monthFilter !== 'all') {
+                    const startD = parseVNDate(t.startDate);
+                    const dueD = parseVNDate(t.dueDate);
+                    let matchTime = false;
+
+                    const checkDateMatch = (d) => {
+                        if (!d) return false;
+                        const yMatch = yearFilter === 'all' || d.getFullYear().toString() === yearFilter;
+                        const mMatch = monthFilter === 'all' || (d.getMonth() + 1).toString() === monthFilter;
+                        return yMatch && mMatch;
+                    };
+
+                    if (checkDateMatch(startD) || checkDateMatch(dueD)) {
+                        matchTime = true;
+                    }
+                    if (!matchTime) return false;
+                }
+
+                if (searchQuery) {
+                    const hay = `${t.title} ${t.docCode} ${t.issuingAgency} ${t.ward || ''} ${t.assignee} ${t.notes}`.toLowerCase();
+                    if (!hay.includes(searchQuery)) return false;
+                }
+                return true;
+            });
+
+            // Phân trang
+            const totalFiltered = filtered.length;
+            const totalPages = Math.ceil(totalFiltered / pageSize) || 1;
+            if (currentPage > totalPages) currentPage = totalPages;
+            if (currentPage < 1) currentPage = 1;
+
+            const startIndex = (currentPage - 1) * pageSize;
+            const paginatedTasks = filtered.slice(startIndex, startIndex + pageSize);
+
+            const listEl = document.getElementById('task-list');
+            const paginationEl = document.getElementById('pagination-container');
+
+            if (totalFiltered === 0) {
+                listEl.innerHTML = `
+                    <div class="bg-white rounded-2xl border border-slate-200/80 p-10 text-center">
+                        <div class="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-3">
+                            <i data-lucide="inbox" class="w-6 h-6"></i>
+                        </div>
+                        <p class="text-sm font-semibold text-slate-700">Không tìm thấy công việc phù hợp</p>
+                        <p class="text-xs text-slate-400 mt-1">Thử thay đổi bộ lọc hoặc thời gian (Năm/Tháng).</p>
+                    </div>
+                `;
+                if (paginationEl) paginationEl.innerHTML = '';
+                lucide.createIcons();
+                return;
+            }
+
+            listEl.innerHTML = paginatedTasks.map((task, idx) => {
+                const actualIndex = startIndex + idx;
+                const st = getTaskStatusInfo(task);
+                const displayStt = task.stt || (actualIndex + 1);
+                const sliderFillColor = task.progress >= 100
+                    ? '#10b981'
+                    : st.type === 'overdue'
+                        ? '#ef4444'
+                        : st.type === 'due-soon'
+                            ? '#f59e0b'
+                            : '#2563eb';
+                return `
+                <article class="rounded-xl border ${st.cardClass} shadow-2xs px-3 py-2 transition-all hover:shadow-sm">
+                    <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-2">
+                        <!-- Cột 1: Số Thứ Tự (STT) nhỏ gọn ở đầu dòng -->
+                        <div class="flex items-center gap-2.5 flex-1 min-w-0">
+                            <div class="w-7 h-7 rounded-lg bg-slate-900 text-white font-bold text-xs flex items-center justify-center shrink-0" title="Số thứ tự #${displayStt}">
+                                ${displayStt}
+                            </div>
+
+                            <!-- Nội dung công việc, metadata & Địa chỉ / Người thực hiện ở giữa -->
+                            <div class="flex-1 min-w-0">
+                                <!-- Dòng 1: Tên công việc + Vùng Địa chỉ & Người thực hiện ở giữa + Trạng thái/Hạn -->
+                                <div class="flex flex-col md:flex-row md:items-center justify-between gap-1.5">
+                                    <div class="flex items-center gap-1.5 min-w-0 flex-1">
+                                        ${task.docCode ? `<span class="px-1.5 py-0.5 rounded text-[11px] font-bold bg-slate-800 text-white shrink-0">${escapeHtml(task.docCode)}</span>` : ''}
+                                        ${task.priority === 'high' ? `<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700 shrink-0">Khẩn</span>` : ''}
+                                        <h3 class="text-xs sm:text-sm font-bold text-slate-900 truncate ${task.progress >= 100 ? 'line-through text-slate-400' : ''}" title="${escapeHtml(task.title)}">
+                                            ${escapeHtml(task.title)}
+                                        </h3>
+                                    </div>
+
+                                    <!-- Khoảng trống dài ở giữa hiển thị Địa chỉ Xã/Phường & Người thực hiện -->
+                                    <div class="md:mx-auto flex items-center gap-2 shrink-0">
+                                        ${task.ward ? `<span class="inline-flex items-center gap-1 text-[11px] font-bold text-teal-800 bg-teal-50 border border-teal-200 px-2.5 py-0.5 rounded-md shadow-2xs" title="Địa bàn xã/phường"><i data-lucide="map-pin" class="w-3 h-3 text-teal-600"></i><span>${escapeHtml(task.ward)}</span></span>` : ''}
+                                        <span class="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-2.5 py-0.5 rounded-md shadow-2xs" title="Người thực hiện">
+                                            <i data-lucide="user-check" class="w-3 h-3 text-indigo-600"></i>
+                                            <span>${escapeHtml(task.assignee || 'Chưa phân công')}</span>
+                                        </span>
+                                    </div>
+                                </div>
+                                <!-- Dòng 2: Cơ quan ban hành, Ngày tiếp nhận, Hạn hoàn thành & Ghi chú gọn -->
+                                <div class="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-slate-500 mt-1">
+                                    <span class="px-1.5 py-0.2 rounded text-[10px] font-semibold border ${st.badgeClass}">${st.badgeText}</span>
+                                    ${task.issuingAgency ? `<span class="inline-flex items-center gap-1 text-slate-700 font-medium truncate max-w-[260px]" title="${escapeHtml(task.issuingAgency)}"><i data-lucide="building-2" class="w-3 h-3 text-slate-400 shrink-0"></i><span class="truncate">${escapeHtml(task.issuingAgency)}</span></span>` : ''}
+                                    <span class="inline-flex items-center gap-1">
+                                        <i data-lucide="calendar-plus" class="w-3 h-3 text-slate-400"></i>
+                                        <span>Nhận: <strong class="text-slate-700">${escapeHtml(task.startDate)}</strong></span>
+                                    </span>
+                                    <span class="inline-flex items-center gap-1">
+                                        <i data-lucide="calendar-clock" class="w-3 h-3 text-slate-400"></i>
+                                        <span>Hạn: <strong class="${st.type === 'overdue' ? 'text-red-600' : st.type === 'due-soon' ? 'text-amber-700' : 'text-slate-700'}">${escapeHtml(task.dueDate)}</strong></span>
+                                    </span>
+                                    ${task.notes ? `<span class="text-slate-400 italic truncate max-w-[280px]" title="${escapeHtml(task.notes)}">• ${escapeHtml(task.notes)}</span>` : ''}
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Cột phải: Thanh trượt tiến độ, SVN, VBDLis & Nút thao tác nằm ngang 1 hàng -->
+                        <div class="flex flex-wrap sm:flex-nowrap items-center justify-between xl:justify-end gap-2.5 pt-1.5 xl:pt-0 border-t xl:border-t-0 border-slate-100 shrink-0">
+                            <!-- Thanh trượt tiến độ thu gọn -->
+                            <div class="w-32 sm:w-36">
+                                <div class="flex items-center justify-between text-[10px] mb-0.5">
+                                    <span class="text-slate-400 font-medium">Tiến độ</span>
+                                    <span id="progress-label-${task.id}" class="font-extrabold text-slate-800">${task.progress}%</span>
+                                </div>
+                                <input type="range" min="0" max="100" step="5" value="${task.progress}"
+                                    style="background: linear-gradient(to right, ${sliderFillColor} ${task.progress}%, #e2e8f0 ${task.progress}%); border-radius: 999px;"
+                                    oninput="previewTaskProgress('${task.id}', this, '${sliderFillColor}')"
+                                    onchange="updateTaskProgress('${task.id}', this.value)"
+                                    class="w-full cursor-pointer">
+                            </div>
+
+                            <!-- Checkbox SVN & VBDLis gọn -->
+                            <div class="flex items-center gap-2 bg-slate-50 rounded-lg px-2 py-1 border border-slate-200/70">
+                                <label class="inline-flex items-center gap-1 cursor-pointer select-none" title="Đã cập nhật SVN">
+                                    <input type="checkbox" ${task.svnUpdated ? 'checked' : ''} onchange="toggleSystemSync('${task.id}', 'svnUpdated', this.checked)" class="w-3.5 h-3.5 rounded text-indigo-600 focus:ring-indigo-500">
+                                    <span class="text-[11px] font-semibold ${task.svnUpdated ? 'text-indigo-700' : 'text-slate-600'}">SVN</span>
+                                </label>
+                                <span class="text-slate-300">|</span>
+                                <label class="inline-flex items-center gap-1 cursor-pointer select-none" title="Đã cập nhật VBDLis">
+                                    <input type="checkbox" ${task.vbdlisUpdated ? 'checked' : ''} onchange="toggleSystemSync('${task.id}', 'vbdlisUpdated', this.checked)" class="w-3.5 h-3.5 rounded text-emerald-600 focus:ring-emerald-500">
+                                    <span class="text-[11px] font-semibold ${task.vbdlisUpdated ? 'text-emerald-700' : 'text-slate-600'}">VBDLis</span>
+                                </label>
+                            </div>
+
+                            <!-- Nút Sửa / Hoàn thành nhanh / Xóa -->
+                            <div class="flex items-center gap-1">
+                                ${task.progress < 100 ? `
+                                    <button onclick="updateTaskProgress('${task.id}', 100)" class="px-2 py-1 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[11px] font-semibold transition cursor-pointer" title="Đánh dấu hoàn thành 100%">
+                                        Xong
+                                    </button>
+                                ` : ''}
+                                <button onclick="openTaskModal('${task.id}')" class="p-1 rounded-md bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 transition cursor-pointer" title="Chỉnh sửa công việc">
+                                    <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+                                </button>
+                                <button onclick="deleteTask('${task.id}')" class="p-1 rounded-md bg-slate-100 hover:bg-red-100 text-slate-600 hover:text-red-600 transition cursor-pointer" title="Xóa công việc">
+                                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </article>
+                `;
+            }).join('');
+
+            // Render phân trang
+            if (paginationEl) {
+                if (totalPages <= 1) {
+                    paginationEl.innerHTML = `<span>Hiển thị toàn bộ ${totalFiltered} công việc</span><span>Trang 1 / 1</span>`;
+                } else {
+                    let pageButtons = '';
+                    for (let p = 1; p <= totalPages; p++) {
+                        if (p === 1 || p === totalPages || (p >= currentPage - 1 && p <= currentPage + 1)) {
+                            pageButtons += `<button onclick="changePage(${p})" class="px-2.5 py-1 rounded-lg font-bold text-xs transition ${p === currentPage ? 'bg-blue-600 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}">${p}</button>`;
+                        } else if (p === currentPage - 2 || p === currentPage + 2) {
+                            pageButtons += `<span class="px-1 text-slate-400">...</span>`;
+                        }
+                    }
+
+                    paginationEl.innerHTML = `
+                        <span>Hiển thị ${startIndex + 1} - ${Math.min(startIndex + pageSize, totalFiltered)} trong tổng số ${totalFiltered} công việc</span>
+                        <div class="flex items-center gap-1">
+                            <button onclick="changePage(${currentPage - 1})" ${currentPage === 1 ? 'disabled class="px-2.5 py-1 rounded-lg text-xs bg-slate-100 text-slate-300 cursor-not-allowed"' : 'class="px-2.5 py-1 rounded-lg text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"'}>Trang trước</button>
+                            ${pageButtons}
+                            <button onclick="changePage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled class="px-2.5 py-1 rounded-lg text-xs bg-slate-100 text-slate-300 cursor-not-allowed"' : 'class="px-2.5 py-1 rounded-lg text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"'}>Trang sau</button>
+                        </div>
+                    `;
+                }
+            }
+
+            lucide.createIcons();
+        }
+
+        function changePage(targetPage) {
+            currentPage = targetPage;
+            renderDashboard();
+            window.scrollTo({ top: 120, behavior: 'smooth' });
+        }
+
+        // ==========================================
+        // 4. TƯƠNG TÁC CẬP NHẬT NHANH & BỘ LỌC
+        // ==========================================
+        function setFilter(filterName) {
+            currentFilter = filterName;
+            currentPage = 1;
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                if (btn.dataset.filter === filterName) {
+                    btn.className = 'filter-btn px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-900 text-white whitespace-nowrap transition cursor-pointer';
+                } else {
+                    btn.className = 'filter-btn px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 whitespace-nowrap transition cursor-pointer';
+                }
+            });
+            renderDashboard();
+        }
+
+        function updateTaskProgress(id, value) {
+            const task = tasks.find(t => t.id === id);
+            if (!task) return;
+            task.progress = Number(value);
+            persistTasks(task);
+            renderDashboard();
+            if (task.progress === 100) {
+                showToast(`Đã hoàn thành: ${task.docCode || task.title}`, 'success');
+            }
+        }
+
+        function previewTaskProgress(id, sliderEl, fillColor) {
+            const val = Number(sliderEl.value);
+            const activeColor = val >= 100 ? '#10b981' : fillColor;
+            sliderEl.style.background = `linear-gradient(to right, ${activeColor} ${val}%, #e2e8f0 ${val}%)`;
+            const lbl = document.getElementById(`progress-label-${id}`);
+            if (lbl) lbl.textContent = `${val}%`;
+        }
+
+        function toggleSystemSync(id, field, checked) {
+            const task = tasks.find(t => t.id === id);
+            if (!task) return;
+            task[field] = checked;
+            persistTasks(task);
+            renderDashboard();
+            const sysName = field === 'svnUpdated' ? 'SVN' : 'VBDLis';
+            showToast(`${checked ? 'Đã đánh dấu' : 'Bỏ đánh dấu'} cập nhật ${sysName}`, 'info');
+        }
+
+        function deleteTask(id) {
+            if (!confirm('Xóa công việc này khỏi danh sách (trên tất cả các máy)?')) return;
+            tasks = tasks.filter(t => t.id !== id);
+            persistTasks(null, id);
+            renderDashboard();
+            showToast('Đã xóa công việc khỏi danh sách.', 'info');
+        }
+
+        // ==========================================
+        // 5. MODAL THÊM / SỬA CÔNG VIỆC
+        // ==========================================
+        function openTaskModal(taskId = null) {
+            const modal = document.getElementById('task-modal');
+            const form = document.getElementById('task-form');
+            form.reset();
+            clearOCRPreview();
+
+            if (taskId) {
+                const task = tasks.find(t => t.id === taskId);
+                if (!task) return;
+                document.getElementById('modal-title').textContent = `Cập nhật thông tin công việc (STT #${task.stt || ''})`;
+                document.getElementById('task-id').value = task.id;
+                document.getElementById('task-doc-code').value = task.docCode || '';
+                document.getElementById('task-issuing-agency').value = task.issuingAgency || '';
+                document.getElementById('task-title').value = task.title || '';
+                document.getElementById('task-ward').value = task.ward || '';
+                document.getElementById('task-start-date').value = vnToInputISO(task.startDate);
+                document.getElementById('task-due-date').value = vnToInputISO(task.dueDate);
+                document.getElementById('task-assignee').value = task.assignee || 'Nguyễn Ngọc Thiện';
+                document.getElementById('task-priority').value = task.priority || 'normal';
+                document.getElementById('task-progress').value = task.progress || 0;
+                document.getElementById('modal-progress-val').textContent = (task.progress || 0) + '%';
+                document.getElementById('task-svn').checked = Boolean(task.svnUpdated);
+                document.getElementById('task-vbdlis').checked = Boolean(task.vbdlisUpdated);
+                document.getElementById('task-notes').value = task.notes || '';
+            } else {
+                const nextStt = getNextSTT();
+                document.getElementById('modal-title').textContent = `Tiếp nhận công việc mới (STT #${nextStt})`;
+                document.getElementById('task-id').value = '';
+                document.getElementById('task-ward').value = '';
+                document.getElementById('task-start-date').value = vnToInputISO(getOffsetVNDateString(0));
+                document.getElementById('task-due-date').value = vnToInputISO(getOffsetVNDateString(3));
+                document.getElementById('task-assignee').value = 'Nguyễn Ngọc Thiện';
+                document.getElementById('task-progress').value = 0;
+                document.getElementById('modal-progress-val').textContent = '0%';
+                document.getElementById('task-svn').checked = false;
+                document.getElementById('task-vbdlis').checked = false;
+            }
+
+            syncDatePickerBadge('task-start-date', 'start-date-vn-badge');
+            syncDatePickerBadge('task-due-date', 'due-date-vn-badge');
+
+            modal.classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        function closeTaskModal() {
+            document.getElementById('task-modal').classList.add('hidden');
+        }
+
+        function saveTask(e) {
+            e.preventDefault();
+            const id = document.getElementById('task-id').value;
+            const startISO = document.getElementById('task-start-date').value;
+            const dueISO = document.getElementById('task-due-date').value;
+
+            const startVN = inputISOToVN(startISO);
+            const dueVN = inputISOToVN(dueISO);
+
+            if (!parseVNDate(startVN) || !parseVNDate(dueVN)) {
+                showToast('Vui lòng chọn đầy đủ Ngày tiếp nhận và Thời hạn hoàn thành!', 'error');
+                return;
+            }
+
+            const existingTask = id ? tasks.find(t => t.id === id) : null;
+            const assignedStt = existingTask ? (existingTask.stt || getNextSTT()) : getNextSTT();
+
+            const taskData = {
+                id: id || 'task-' + Date.now(),
+                stt: assignedStt,
+                docCode: document.getElementById('task-doc-code').value.trim(),
+                issuingAgency: document.getElementById('task-issuing-agency').value.trim(),
+                title: document.getElementById('task-title').value.trim(),
+                ward: document.getElementById('task-ward').value,
+                startDate: startVN,
+                dueDate: dueVN,
+                assignee: document.getElementById('task-assignee').value,
+                priority: document.getElementById('task-priority').value,
+                progress: Number(document.getElementById('task-progress').value),
+                svnUpdated: document.getElementById('task-svn').checked,
+                vbdlisUpdated: document.getElementById('task-vbdlis').checked,
+                notes: document.getElementById('task-notes').value.trim()
+            };
+
+            if (id) {
+                const idx = tasks.findIndex(t => t.id === id);
+                if (idx !== -1) tasks[idx] = taskData;
+                showToast(`Đã cập nhật công việc #${assignedStt}!`, 'success');
+            } else {
+                tasks.unshift(taskData);
+                showToast(`Đã tiếp nhận công việc mới (STT #${assignedStt})!`, 'success');
+            }
+
+            persistTasks(taskData);
+            populateWardSelectors();
+            renderDashboard();
+            closeTaskModal();
+        }
+
+        // ==========================================
+        // 6. QUÉT VĂN BẢN TỪ CHỤP MÀN HÌNH / PDF / CTRL+V (GEMINI AI)
+        // ==========================================
+        function setupOCRPasteAndDrop() {
+            const dropZone = document.getElementById('ocr-drop-zone');
+            if (!dropZone) return;
+
+            // Bắt sự kiện dán Ctrl + V trên toàn cửa sổ khi Modal đang mở
+            document.addEventListener('paste', (e) => {
+                const modal = document.getElementById('task-modal');
+                if (!modal || modal.classList.contains('hidden')) return;
+
+                const items = e.clipboardData?.items || [];
+                const files = e.clipboardData?.files || [];
+
+                if (files.length > 0) {
+                    const file = files[0];
+                    if (file.type.startsWith('image/') || file.type === 'application/pdf') {
+                        e.preventDefault();
+                        processDocumentFileWithGemini(file);
+                        return;
+                    }
+                }
+
+                for (let i = 0; i < items.length; i++) {
+                    const item = items[i];
+                    if (item.type.indexOf('image') !== -1 || item.type === 'application/pdf') {
+                        const file = item.getAsFile();
+                        if (file) {
+                            e.preventDefault();
+                            processDocumentFileWithGemini(file);
+                            return;
+                        }
+                    }
+                }
+            });
+
+            // Kéo thả file vào vùng quét
+            dropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropZone.classList.add('border-blue-600', 'bg-blue-100/70');
+            });
+
+            dropZone.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('border-blue-600', 'bg-blue-100/70');
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('border-blue-600', 'bg-blue-100/70');
+                const files = e.dataTransfer?.files;
+                if (files && files.length > 0) {
+                    processDocumentFileWithGemini(files[0]);
+                }
+            });
+        }
+
+        function handleFileSelect(input) {
+            if (input.files && input.files[0]) {
+                processDocumentFileWithGemini(input.files[0]);
+                input.value = '';
+            }
+        }
+
+        async function captureScreenForOCR() {
+            try {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+                    showToast('Trình duyệt không hỗ trợ chụp màn hình trực tiếp. Hãy dùng phím tắt Win+Shift+S rồi nhấn Ctrl+V vào đây!', 'error');
+                    return;
+                }
+                const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                const video = document.createElement('video');
+                video.srcObject = stream;
+                await video.play();
+
+                await new Promise(r => setTimeout(r, 250));
+                const canvas = document.createElement('canvas');
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                canvas.getContext('2d').drawImage(video, 0, 0);
+
+                stream.getTracks().forEach(track => track.stop());
+
+                canvas.toBlob((blob) => {
+                    if (blob) {
+                        const file = new File([blob], 'chup-man-hinh.png', { type: 'image/png' });
+                        processDocumentFileWithGemini(file);
+                    }
+                }, 'image/png');
+            } catch (err) {
+                showToast('Đã hủy chụp màn hình hoặc chưa cấp quyền.', 'info');
+            }
+        }
+
+        function showOCRPreview(dataUrl, fileName, isLoading = false) {
+            const container = document.getElementById('ocr-preview-container');
+            if (!container) return;
+            container.innerHTML = `
+                <div class="flex items-center justify-between p-2.5 bg-white border ${isLoading ? 'border-blue-300' : 'border-emerald-300'} rounded-xl text-xs shadow-2xs">
+                    <div class="flex items-center gap-2.5 min-w-0">
+                        ${dataUrl
+                            ? `<img src="${dataUrl}" alt="Xem trước" class="w-10 h-10 object-cover rounded-lg border border-slate-200 shrink-0">`
+                            : `<div class="w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0"><i data-lucide="file-text" class="w-5 h-5"></i></div>`
+                        }
+                        <div class="truncate">
+                            <div class="font-semibold text-slate-800 truncate">${escapeHtml(fileName)}</div>
+                            <div class="text-[11px] ${isLoading ? 'text-blue-600 font-medium animate-pulse' : 'text-emerald-600 font-medium'}">
+                                ${isLoading ? 'Đang quét và tự động điền thông tin văn bản...' : 'Đã bóc tách & điền thông tin xong!'}
+                            </div>
+                        </div>
+                    </div>
+                    <button type="button" onclick="clearOCRPreview()" class="p-1 text-slate-400 hover:text-red-500 transition cursor-pointer" title="Xóa tệp xem trước">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        function clearOCRPreview() {
+            const container = document.getElementById('ocr-preview-container');
+            if (container) container.innerHTML = '';
+        }
+
+        function readFileAsDataURL(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function processDocumentFileWithGemini(file) {
+            const isImage = file.type.startsWith('image/');
+            const isPDF = file.type === 'application/pdf';
+            if (!isImage && !isPDF) {
+                showToast('Vui lòng chọn tệp hình ảnh (PNG, JPG) hoặc tài liệu PDF.', 'error');
+                return;
+            }
+
+            try {
+                const dataUrl = await readFileAsDataURL(file);
+                const base64 = dataUrl.split(',')[1];
+                const mimeType = file.type || (isPDF ? 'application/pdf' : 'image/png');
+
+                showOCRPreview(isImage ? dataUrl : null, file.name || 'Anh_chup_man_hinh.png', true);
+
+                const prompt = `Bạn là trợ lý hành chính Việt Nam chuyên bóc tách thông tin công văn, tờ trình, giấy đề nghị. Hãy đọc thật kỹ hình ảnh hoặc tài liệu PDF đính kèm (bao gồm cả chữ đánh máy, chữ viết tay, dấu công văn đến) và trích xuất đầy đủ các thông tin sau dưới dạng JSON:
+1. "docCode": Số hiệu / ký hiệu văn bản (ví dụ nằm ngay dưới tên cơ quan ban hành bên góc trái, như "011/CV-NK", "119/TNMT-ĐĐ"...).
+2. "issuingAgency": Tên cơ quan/tổ chức/doanh nghiệp ban hành văn bản (thường in hoa ở góc trên bên trái, ví dụ "Công ty TNHH Khảo sát và xây dựng Nam Khánh").
+3. "docDate": Ngày tháng năm ban hành hoặc ngày đến của văn bản, BẮT BUỘC định dạng chuẩn Việt Nam "DD-MM-YYYY" (ví dụ: "Hải Phòng, ngày 10 tháng 11 năm 2026" -> "10-11-2026"). Nếu không thấy ngày thì để chuỗi rỗng "".
+4. "dueDate": Thời hạn hoàn thành nếu được nêu trong văn bản theo định dạng "DD-MM-YYYY". Nếu không nêu rõ thì để chuỗi rỗng "".
+5. "title": Toàn bộ trích yếu hoặc nội dung đề nghị chính trong văn bản (ví dụ bắt đầu bằng "V/v..." hoặc nội dung kính gửi/đề nghị giải quyết).
+6. "ward": Tên đơn vị hành chính cấp xã (Phường, Xã hoặc Đặc khu thuộc TP. Hải Phòng) liên quan đến vị trí thửa đất hoặc địa bàn giải quyết nêu trong văn bản (ví dụ: "Phường Dương Kinh", "Phường Thủy Nguyên", "Xã Kiến Thụy", "Đặc khu Cát Hải"...). Nếu không thấy thì để chuỗi rỗng "".
+7. "isUrgent": true nếu văn bản có dấu hoặc từ khóa "Khẩn", "Thượng khẩn", "Hỏa tốc", "Gấp", ngược lại là false.
+8. "notes": Tóm tắt ngắn gọn các yêu cầu, địa điểm thửa đất, tên chủ sử dụng đất hoặc nội dung cần xử lý chi tiết trong văn bản.
+
+Chỉ trả về JSON thuần túy theo đúng schema.`;
+
+                let apiKey = localStorage.getItem(GEMINI_KEY) || '';
+                if (!apiKey) {
+                    apiKey = (window.prompt('Nhập Gemini API key để tự động đọc văn bản (lấy miễn phí tại https://aistudio.google.com/apikey). Bỏ trống nếu muốn nhập tay.') || '').trim();
+                    if (!apiKey) {
+                        showOCRPreview(null, file.name || 'Tệp văn bản', false);
+                        showToast('Chưa có Gemini API key nên chưa tự đọc được văn bản. Bạn có thể nhập tay các trường bên dưới.', 'info');
+                        return;
+                    }
+                    localStorage.setItem(GEMINI_KEY, apiKey);
+                }
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+                const payload = {
+                    contents: [{
+                        role: "user",
+                        parts: [
+                            { text: prompt },
+                            {
+                                inlineData: {
+                                    mimeType: mimeType,
+                                    data: base64
+                                }
+                            }
+                        ]
+                    }],
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: {
+                            type: "OBJECT",
+                            properties: {
+                                docCode: { type: "STRING" },
+                                issuingAgency: { type: "STRING" },
+                                docDate: { type: "STRING" },
+                                dueDate: { type: "STRING" },
+                                title: { type: "STRING" },
+                                ward: { type: "STRING" },
+                                isUrgent: { type: "BOOLEAN" },
+                                notes: { type: "STRING" }
+                            }
+                        }
+                    }
+                };
+
+                let responseData = null;
+                const delays = [1000, 2000, 4000];
+                for (let attempt = 0; attempt <= delays.length; attempt++) {
+                    const res = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (res.ok) {
+                        responseData = await res.json();
+                        break;
+                    }
+                    if (attempt < delays.length) {
+                        await new Promise(r => setTimeout(r, delays[attempt]));
+                    } else {
+                        throw new Error('Không thể kết nối dịch vụ nhận diện văn bản.');
+                    }
+                }
+
+                const rawText = responseData?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!rawText) throw new Error('Không đọc được nội dung văn bản.');
+
+                const extracted = JSON.parse(rawText);
+
+                // Hàm phụ trợ điền giá trị và làm nổi bật ô vừa được điền tự động
+                const autoFillField = (elementId, value, overwrite = true) => {
+                    if (!value) return;
+                    const el = document.getElementById(elementId);
+                    if (!el) return;
+                    if (overwrite || !el.value.trim()) {
+                        el.value = value;
+                        el.classList.add('ring-2', 'ring-emerald-400', 'bg-emerald-50/40');
+                        setTimeout(() => {
+                            el.classList.remove('ring-2', 'ring-emerald-400', 'bg-emerald-50/40');
+                        }, 2500);
+                    }
+                };
+
+                // Tự động điền toàn bộ thông tin vào các ô nhập liệu
+                autoFillField('task-doc-code', extracted.docCode?.trim());
+                autoFillField('task-issuing-agency', extracted.issuingAgency?.trim());
+                autoFillField('task-title', extracted.title?.trim());
+
+                const matchedWard = matchHaiPhongWard(extracted.ward) || matchHaiPhongWard(extracted.title) || matchHaiPhongWard(extracted.notes);
+                if (matchedWard) {
+                    autoFillField('task-ward', matchedWard);
+                }
+
+                if (extracted.docDate && parseVNDate(extracted.docDate)) {
+                    autoFillField('task-start-date', vnToInputISO(extracted.docDate));
+                    syncDatePickerBadge('task-start-date', 'start-date-vn-badge');
+                }
+
+                if (extracted.dueDate && parseVNDate(extracted.dueDate)) {
+                    autoFillField('task-due-date', vnToInputISO(extracted.dueDate));
+                    syncDatePickerBadge('task-due-date', 'due-date-vn-badge');
+                }
+
+                if (extracted.isUrgent) {
+                    const priorityEl = document.getElementById('task-priority');
+                    if (priorityEl) {
+                        priorityEl.value = 'high';
+                        priorityEl.classList.add('ring-2', 'ring-emerald-400', 'bg-emerald-50/40');
+                        setTimeout(() => priorityEl.classList.remove('ring-2', 'ring-emerald-400', 'bg-emerald-50/40'), 2500);
+                    }
+                }
+
+                if (extracted.notes?.trim()) {
+                    const notesEl = document.getElementById('task-notes');
+                    const newNote = extracted.notes.trim();
+                    if (notesEl) {
+                        const updatedNote = notesEl.value.trim() && !notesEl.value.includes(newNote)
+                            ? `${notesEl.value.trim()}\n${newNote}`
+                            : newNote;
+                        autoFillField('task-notes', updatedNote);
+                    }
+                }
+
+                showOCRPreview(isImage ? dataUrl : null, file.name || 'Anh_chup_man_hinh.png', false);
+                showToast('Đã tự động điền thông tin văn bản! Bạn chỉ cần kiểm tra và bấm "Lưu công việc".', 'success');
+
+                // Di chuyển tiêu điểm tới nút Lưu công việc để thao tác nhanh
+                const saveBtn = document.getElementById('btn-save-task');
+                if (saveBtn) {
+                    saveBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    saveBtn.focus();
+                }
+            } catch (err) {
+                console.error(err);
+                if (String(err && err.message).includes('Không thể kết nối')) localStorage.removeItem(GEMINI_KEY);
+                showOCRPreview(null, file.name || 'Tệp văn bản', false);
+                showToast('Không thể tự động đọc ảnh này, bạn có thể nhập thủ công các trường bên dưới.', 'error');
+            }
+        }
+
+        // ==========================================
+        // 7. CHẾ ĐỘ GHIM GÓC MÀN HÌNH & GOOGLE DRIVE
+        // ==========================================
+        function toggleCompactMode() {
+            const isCompact = document.body.classList.toggle('compact-mode');
+            const label = document.getElementById('label-compact');
+            const icon = document.getElementById('icon-compact');
+            if (isCompact) {
+                label.textContent = 'Mở rộng';
+                icon.setAttribute('data-lucide', 'maximize-2');
+                try { window.resizeTo(460, 740); } catch (e) {}
+                showToast('Đã bật chế độ thu gọn để ghim ở góc màn hình.', 'info');
+            } else {
+                label.textContent = 'Ghim góc màn hình';
+                icon.setAttribute('data-lucide', 'minimize-2');
+            }
+            lucide.createIcons();
+        }
+
+        function toggleDropdownMenu() {
+            document.getElementById('dropdown-menu').classList.toggle('hidden');
+        }
+
+        document.addEventListener('click', (e) => {
+            const menu = document.getElementById('dropdown-menu');
+            if (menu && !menu.classList.contains('hidden') && !e.target.closest('.relative')) {
+                menu.classList.add('hidden');
+            }
+        });
+
+        function openStartupGuideModal() {
+            document.getElementById('startup-modal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+        function closeStartupGuideModal() {
+            document.getElementById('startup-modal').classList.add('hidden');
+        }
+
+        function openDriveSyncModal() {
+            const savedClientId = localStorage.getItem(GDRIVE_CLIENT_ID_KEY) || '';
+            const inputEl = document.getElementById('google-client-id-input');
+            if (inputEl && savedClientId) inputEl.value = savedClientId;
+            document.getElementById('drive-modal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+        function closeDriveSyncModal() {
+            document.getElementById('drive-modal').classList.add('hidden');
+        }
+
+        function exportBackupJSON() {
+            const dataStr = JSON.stringify(tasks, null, 2);
+            const blob = new Blob([dataStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Dashboard_CongViec_${formatDateVN(new Date())}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast('Đã tải tệp sao lưu dữ liệu!', 'success');
+        }
+
+        function importBackupJSON(event) {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const imported = JSON.parse(e.target.result);
+                    if (Array.isArray(imported)) {
+                        replaceAllTasks(imported.map(t => ({
+                            ...t,
+                            startDate: normalizeToVNDateString(t.startDate),
+                            dueDate: normalizeToVNDateString(t.dueDate)
+                        })));
+                        persistTasks();
+                        renderDashboard();
+                        showToast(`Đã khôi phục ${tasks.length} công việc từ tệp sao lưu!`, 'success');
+                    }
+                } catch (err) {
+                    showToast('Tệp sao lưu không hợp lệ.', 'error');
+                }
+            };
+            reader.readAsText(file);
+            event.target.value = '';
+        }
+
+        // ==========================================
+        // 8. TIỆN ÍCH HIỂN THỊ & KHỞI CHẠY
+        // ==========================================
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            if (!container) return;
+            const colors = {
+                success: 'bg-emerald-600 text-white',
+                error: 'bg-red-600 text-white',
+                info: 'bg-slate-800 text-white'
+            };
+            const toast = document.createElement('div');
+            toast.className = `${colors[type] || colors.info} px-4 py-2.5 rounded-xl shadow-lg text-xs font-semibold flex items-center gap-2 transition-all duration-300`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 300);
+            }, 3200);
+        }
+
+        function updateClock() {
+            const el = document.getElementById('live-clock');
+            if (!el) return;
+            const now = new Date();
+            const time = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+            el.textContent = `${formatDateVN(now)} • ${time}`;
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            updateClock();
+            setInterval(updateClock, 30000);
+            populateWardSelectors();
+            renderDashboard();
+            setupOCRPasteAndDrop();
+            initDriveSync();
+            lucide.createIcons();
+        });
+
+        // Xuất các hàm ra phạm vi toàn cục (window) để tương thích với sự kiện onclick trong HTML module
+        Object.assign(window, {
+            openTaskModal,
+            closeTaskModal,
+            saveTask,
+            setFilter,
+            changePage,
+            previewTaskProgress,
+            updateTaskProgress,
+            toggleSystemSync,
+            deleteTask,
+            syncDatePickerBadge,
+            captureScreenForOCR,
+            handleFileSelect,
+            clearOCRPreview,
+            toggleCompactMode,
+            toggleDropdownMenu,
+            openStartupGuideModal,
+            closeStartupGuideModal,
+            openDriveSyncModal,
+            closeDriveSyncModal,
+            connectGoogleDriveOAuth,
+            syncDriveNow,
+            disconnectGoogleDrive,
+            onDriveButtonClick,
+            onFilterChange,
+            renderDashboard,
+            exportBackupJSON,
+            importBackupJSON,
+            resetToSampleData
+        });
+    </script>
+</body>
+</html>
